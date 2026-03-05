@@ -1,0 +1,6 @@
+flask
+pandas
+reportlab
+PyPDF2
+werkzeug
+gunicorn
