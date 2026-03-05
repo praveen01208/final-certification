@@ -2,7 +2,7 @@ from flask import Flask, render_template, request, jsonify
 import pandas as pd
 from reportlab.pdfgen import canvas
 from pypdf import PdfReader, PdfWriter
-import io, time, logging, threading, uuid, base64, requests
+import io, time, logging, threading, uuid, base64, requests, os
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -114,7 +114,7 @@ def send():
     try:
         csv_file     = request.files.get("csv_file")
         pdf_tpl      = request.files.get("pdf_template")
-        api_key      = request.form.get("api_key", "").strip()
+        api_key      = request.form.get("api_key", "").strip() or os.environ.get("BREVO_API_KEY", "")
         sender_email = request.form.get("sender_email", "").strip()
         sender_name  = request.form.get("sender_name", "C-TEC Team").strip()
         subject      = request.form.get("subject", "Your Certificate").strip()
