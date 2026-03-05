@@ -2,42 +2,41 @@ from flask import Flask, render_template, request, jsonify
 import pandas as pd
 from reportlab.pdfgen import canvas
 from PyPDF2 import PdfReader, PdfWriter
-import os, time, smtplib, io
+import smtplib, io, time
 from email.message import EmailMessage
-from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
-OUTPUT_FOLDER = "generated"
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
+def create_certificate_bytes(name, template_bytes):
+    """Generate a certificate PDF entirely in memory — no disk I/O."""
 
-def create_certificate(name, template_bytes, output_path):
-    """Overlay the participant name onto the PDF template."""
-    packet_path = f"temp_{secure_filename(name)}.pdf"
-
-    c = canvas.Canvas(packet_path)
+    # 1. Draw the name overlay on a blank canvas -> in-memory buffer
+    overlay_buffer = io.BytesIO()
+    c = canvas.Canvas(overlay_buffer)
     c.setFont("Helvetica-Bold", 30)
-    # Adjust x, y to match your template's <<Name>> position
-    c.drawCentredString(400, 300, name)
+    c.drawCentredString(400, 300, name)   # <- adjust x,y to match your template
     c.save()
+    overlay_buffer.seek(0)
 
+    # 2. Merge overlay onto template
     template = PdfReader(io.BytesIO(template_bytes))
-    overlay  = PdfReader(packet_path)
+    overlay  = PdfReader(overlay_buffer)
     writer   = PdfWriter()
 
     page = template.pages[0]
     page.merge_page(overlay.pages[0])
     writer.add_page(page)
 
-    with open(output_path, "wb") as f:
-        writer.write(f)
+    # 3. Write merged PDF to another in-memory buffer
+    output_buffer = io.BytesIO()
+    writer.write(output_buffer)
+    output_buffer.seek(0)
+    return output_buffer.read()
 
-    os.remove(packet_path)
 
-
-def send_email(sender_email, app_password, receiver_email, name, file_path, subject):
-    """Send a certificate PDF to a single recipient."""
+def send_email(sender_email, app_password, receiver_email, name, pdf_bytes, subject):
+    """Email a certificate PDF (bytes) to the recipient."""
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"]    = sender_email
@@ -53,9 +52,8 @@ Best Regards,
 C-TEC Event Team
 KLE College of Engineering and Technology""")
 
-    with open(file_path, "rb") as f:
-        msg.add_attachment(f.read(), maintype="application",
-                           subtype="pdf", filename="certificate.pdf")
+    msg.add_attachment(pdf_bytes, maintype="application",
+                       subtype="pdf", filename="certificate.pdf")
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
         smtp.login(sender_email, app_password)
@@ -86,28 +84,29 @@ def send():
     try:
         df = pd.read_csv(csv_file)
     except Exception as e:
-        return jsonify({"error": f"Could not parse CSV: {e}"}), 400
+        return jsonify({"error": f"Could not parse CSV: {str(e)}"}), 400
 
     if name_col not in df.columns or "email" not in df.columns:
-        return jsonify({"error": f"CSV must have '{name_col}' and 'email' columns."}), 400
+        return jsonify({
+            "error": f"CSV must have '{name_col}' and 'email' columns. "
+                     f"Found: {list(df.columns)}"
+        }), 400
 
     results = []
 
     for _, row in df.iterrows():
         name  = str(row[name_col]).strip()
         email = str(row["email"]).strip()
-        output_path = os.path.join(OUTPUT_FOLDER, f"{secure_filename(name)}.pdf")
 
         try:
-            create_certificate(name, template_bytes, output_path)
-            send_email(sender_email, app_password, email, name,
-                       output_path, subject)
+            pdf_bytes = create_certificate_bytes(name, template_bytes)
+            send_email(sender_email, app_password, email, name, pdf_bytes, subject)
             results.append({"name": name, "email": email, "status": "sent"})
         except Exception as e:
             results.append({"name": name, "email": email,
                             "status": "failed", "error": str(e)})
 
-        time.sleep(1.5)  # stay within Gmail rate limits
+        time.sleep(1.5)
 
     return jsonify({"results": results})
 
