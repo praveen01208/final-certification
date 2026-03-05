@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, jsonify
 import pandas as pd
 from reportlab.pdfgen import canvas
-from PyPDF2 import PdfReader, PdfWriter
+from pypdf import PdfReader, PdfWriter          # <-- pypdf, not PyPDF2
 import smtplib, io, time
 from email.message import EmailMessage
 
@@ -9,17 +9,17 @@ app = Flask(__name__)
 
 
 def create_certificate_bytes(name, template_bytes):
-    """Generate a certificate PDF entirely in memory — no disk I/O."""
+    """Generate certificate PDF entirely in memory."""
 
-    # 1. Draw the name overlay on a blank canvas -> in-memory buffer
+    # 1. Render name onto a blank ReportLab canvas
     overlay_buffer = io.BytesIO()
     c = canvas.Canvas(overlay_buffer)
     c.setFont("Helvetica-Bold", 30)
-    c.drawCentredString(400, 300, name)   # <- adjust x,y to match your template
+    c.drawCentredString(400, 300, name)   # adjust x,y to suit your template
     c.save()
     overlay_buffer.seek(0)
 
-    # 2. Merge overlay onto template
+    # 2. Merge overlay onto the template page
     template = PdfReader(io.BytesIO(template_bytes))
     overlay  = PdfReader(overlay_buffer)
     writer   = PdfWriter()
@@ -28,15 +28,15 @@ def create_certificate_bytes(name, template_bytes):
     page.merge_page(overlay.pages[0])
     writer.add_page(page)
 
-    # 3. Write merged PDF to another in-memory buffer
-    output_buffer = io.BytesIO()
-    writer.write(output_buffer)
-    output_buffer.seek(0)
-    return output_buffer.read()
+    # 3. Return merged PDF as bytes
+    out = io.BytesIO()
+    writer.write(out)
+    out.seek(0)
+    return out.read()
 
 
 def send_email(sender_email, app_password, receiver_email, name, pdf_bytes, subject):
-    """Email a certificate PDF (bytes) to the recipient."""
+    """Send certificate PDF to one recipient."""
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"]    = sender_email
@@ -89,7 +89,7 @@ def send():
     if name_col not in df.columns or "email" not in df.columns:
         return jsonify({
             "error": f"CSV must have '{name_col}' and 'email' columns. "
-                     f"Found: {list(df.columns)}"
+                     f"Found columns: {list(df.columns)}"
         }), 400
 
     results = []
@@ -106,7 +106,7 @@ def send():
             results.append({"name": name, "email": email,
                             "status": "failed", "error": str(e)})
 
-        time.sleep(1.5)
+        time.sleep(1.5)   # respect Gmail rate limits
 
     return jsonify({"results": results})
 
